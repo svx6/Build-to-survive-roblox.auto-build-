@@ -452,12 +452,20 @@ end
 function DataReader:DownloadContent(url)
     if type(url) ~= "string" or #url == 0 then return false, "URL is empty." end
     if string_find(url, "discord%.com/channels/") then
-        return false, "Discord message links require a direct CDN URL. "
-            .. "Right-click the file → 'Copy Link' for cdn.discordapp.com/..."
+        return false, "That is a Discord message link. You need the direct file URL instead.\n"
+            .. "How to get it: Right-click the file/image in Discord -> Copy Link.\n"
+            .. "The link should start with cdn.discordapp.com or media.discordapp.net"
     end
-    local ok, data = pcall(game.HttpGet, game, url)
-    if not ok then return false, "HTTP failed: " .. tostring(data) end
-    if type(data) ~= "string" or #data == 0 then return false, "Empty response." end
+    local ok, data
+    for attempt = 1, 3 do
+        ok, data = pcall(game.HttpGet, game, url)
+        if ok and type(data) == "string" and #data > 0 then
+            return true, data
+        end
+        task.wait(0.5 * attempt)
+    end
+    if not ok then return false, "HTTP failed after 3 tries: " .. tostring(data) end
+    if type(data) ~= "string" or #data == 0 then return false, "Empty response from server." end
     return true, data
 end
 
@@ -465,17 +473,33 @@ end
 -- §14  DISCORD CDN HANDLER
 --------------------------------------------------------------------------------
 function DataReader:HandleDiscordURL(url)
-    local lower = string_lower(url)
-    if string_find(lower, "%.png") or string_find(lower, "%.jpg")
-        or string_find(lower, "%.jpeg") or string_find(lower, "%.gif")
-        or string_find(lower, "%.webp") then
-        return false, "Direct image files cannot be parsed in-game. "
-            .. "Convert to JSON pixel array first (e.g. img2pixel.com). "
-            .. "Format: [[[r,g,b],[r,g,b],...],...]"
-    end
+    local cleanURL = string_match(url, "^([^%?#]+)") or url
+    local lower = string_lower(cleanURL)
+    local isImage = string_find(lower, "%.png$") or string_find(lower, "%.jpg$")
+        or string_find(lower, "%.jpeg$") or string_find(lower, "%.gif$")
+        or string_find(lower, "%.webp$") or string_find(lower, "%.bmp$")
+
     local ok, content = self:DownloadContent(url)
-    if not ok then return false, content end
-    return self:Parse(content)
+    if not ok then
+        if isImage then
+            return false, "Could not download from Discord. For images, convert to pixel JSON first:\n"
+                .. "1. Go to img2pixel.com\n"
+                .. "2. Upload your image\n"
+                .. "3. Copy the JSON output (format: [[[r,g,b],...],...])"
+        end
+        return false, content
+    end
+
+    local pOk, result = self:Parse(content)
+    if not pOk and isImage then
+        return false, "Discord image files (PNG/JPG) cannot be parsed directly in-game.\n"
+            .. "Convert to pixel data first:\n"
+            .. "1. Go to img2pixel.com\n"
+            .. "2. Upload your image\n"
+            .. "3. Copy the JSON output\n"
+            .. "4. Paste it in the Pixel Art tab"
+    end
+    return pOk, result
 end
 
 --------------------------------------------------------------------------------
